@@ -1,6 +1,9 @@
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+require('dotenv').config();
+
+
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -8,8 +11,7 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-const uri =
-  "mongodb+srv://homeherodbUser:BsO5QUhQt4EGYqip@cluster0.m4ciotl.mongodb.net/?appName=Cluster0";
+const uri = process.env.MONGO_URI || "";
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -20,7 +22,7 @@ const client = new MongoClient(uri, {
 });
 
 app.get("/", (req, res) => {
-  res.send("Smart server is running");
+  res.send("HomeHero server is running");
 });
 
 async function run() {
@@ -102,5 +104,5 @@ async function run() {
 run().catch(console.dir);
 
 app.listen(port, () => {
-  console.log(`Smart server is running on port: ${port}`);
+  console.log(`HomeHero server is running on port: ${port}`);
 });
