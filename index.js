@@ -1,8 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-require('dotenv').config();
-
+require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -32,6 +31,26 @@ async function run() {
     const db = client.db("home_hero");
     const servicesCollection = db.collection("services");
     const bookingsCollection = db.collection("bookings");
+    const usersCollection = db.collection("users");
+    
+
+    // Save user to database
+app.post("/users", async (req, res) => {
+  const { name, email, photoURL } = req.body;
+
+  try {
+    const existingUser = await usersCollection.findOne({ email });
+    if (existingUser) {
+      return res.status(200).send({ message: "User already exists" });
+    }
+
+    const result = await usersCollection.insertOne({ name, email, photoURL });
+    res.status(201).send(result);
+  } catch (error) {
+    res.status(500).send({ error: "Failed to save user" });
+  }
+});
+
 
     // add service
     app.post("/services", async (req, res) => {
@@ -93,7 +112,6 @@ async function run() {
       });
       res.send(result);
     });
-    
 
     await client.db("admin").command({ ping: 1 });
     console.log(
