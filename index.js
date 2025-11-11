@@ -74,7 +74,10 @@ async function run() {
 
     // add service
     app.post("/services", async (req, res) => {
-      const result = await servicesCollection.insertOne(req.body);
+      const result = await servicesCollection.insertOne({
+        ...req.body,
+        createdAt: new Date(),
+      });
       res.send(result);
     });
 
@@ -92,29 +95,75 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/services/:id", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const service = await servicesCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!service)
+          return res.status(404).send({ error: "Service not found" });
+        res.send(service);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to fetch service" });
+      }
+    });
+
     // update service
     app.patch("/services/:id", async (req, res) => {
       const { id } = req.params;
-      const updatedService = { $set: req.body };
-      const result = await servicesCollection.updateOne(
-        { _id: new ObjectId(id) },
-        updatedService
-      );
-      res.send(result);
+      const { providerEmail, ...updates } = req.body;
+
+      try {
+        const result = await servicesCollection.updateOne(
+          { _id: new ObjectId(id), providerEmail },
+          { $set: updates }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(403).send({
+            error: "Unauthorized: You can only update your own services",
+          });
+        }
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to update service" });
+      }
     });
 
     // delete service
     app.delete("/services/:id", async (req, res) => {
-      const result = await servicesCollection.deleteOne({
-        _id: new ObjectId(req.params.id),
-      });
-      res.send(result);
+      const { id } = req.params;
+      const { providerEmail } = req.body;
+
+      try {
+        const result = await servicesCollection.deleteOne({
+          _id: new ObjectId(id),
+          providerEmail,
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(403).send({
+            error: "Unauthorized: You can only delete your own services",
+          });
+        }
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to delete service" });
+      }
     });
 
     // Book a Service
     app.post("/bookings", async (req, res) => {
-      const result = await bookingsCollection.insertOne(req.body);
-      res.send(result);
+      const booking = req.body;
+      try {
+        const result = await bookingsCollection.insertOne(booking);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to create booking" });
+      }
     });
 
     // Get User's Bookings
