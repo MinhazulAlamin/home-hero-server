@@ -32,25 +32,45 @@ async function run() {
     const servicesCollection = db.collection("services");
     const bookingsCollection = db.collection("bookings");
     const usersCollection = db.collection("users");
-    
 
     // Save user to database
-app.post("/users", async (req, res) => {
-  const { name, email, photoURL } = req.body;
+    app.post("/users", async (req, res) => {
+      const { name, email, photoURL } = req.body;
 
-  try {
-    const existingUser = await usersCollection.findOne({ email });
-    if (existingUser) {
-      return res.status(200).send({ message: "User already exists" });
-    }
+      try {
+        const existingUser = await usersCollection.findOne({ email });
+        if (existingUser) {
+          return res.status(200).send({ message: "User already exists" });
+        }
 
-    const result = await usersCollection.insertOne({ name, email, photoURL });
-    res.status(201).send(result);
-  } catch (error) {
-    res.status(500).send({ error: "Failed to save user" });
-  }
-});
+        const result = await usersCollection.insertOne({
+          name,
+          email,
+          photoURL,
+        });
+        res.status(201).send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to save user" });
+      }
+    });
 
+    app.patch("/users", async (req, res) => {
+      const { email, name, photoURL } = req.body;
+
+      const updateFields = {};
+      if (name) updateFields.name = name;
+      if (photoURL) updateFields.photoURL = photoURL;
+
+      try {
+        const result = await usersCollection.updateOne(
+          { email },
+          { $set: updateFields }
+        );
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to update user" });
+      }
+    });
 
     // add service
     app.post("/services", async (req, res) => {
