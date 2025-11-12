@@ -74,17 +74,89 @@ async function run() {
 
     // add service
     app.post("/services", async (req, res) => {
-      const result = await servicesCollection.insertOne({
-        ...req.body,
-        createdAt: new Date(),
+      let service = req.body;
+
+      if (typeof service.price === "string") {
+        service.price = parseInt(service.price);
+      }
+
+      if (!service.reviews) {
+        service.reviews = [];
+      }
+
+      try {
+        const result = await servicesCollection.insertOne(service);
+        res.send({ message: "Service added", insertedId: result.insertedId });
+      } catch (error) {
+        res.status(500).send({ error: "Failed to add service" });
+      }
+    });
+
+    app.post("/services/:id/review", async (req, res) => {
+      const { userId, userName, rating, comment } = req.body;
+      const serviceId = req.params.id;
+      const existing = await servicesCollection.findOne({
+        _id: new ObjectId(serviceId),
+        "reviews.userId": userId,
       });
-      res.send(result);
+
+      if (existing) {
+        const updateFields = {};
+        if (rating !== undefined) updateFields["reviews.$.rating"] = rating;
+        if (comment !== undefined) updateFields["reviews.$.comment"] = comment;
+
+        await servicesCollection.updateOne(
+          { _id: new ObjectId(serviceId), "reviews.userId": userId },
+          { $set: updateFields }
+        );
+      } else {
+        const newReview = {
+          userId,
+          userName,
+          rating: rating || null,
+          comment: comment || "",
+          createdAt: new Date(),
+        };
+
+        await servicesCollection.updateOne(
+          { _id: new ObjectId(serviceId) },
+          { $push: { reviews: newReview } }
+        );
+      }
+
+      res.send({ success: true });
     });
 
     // get all services
+    app.get("/services/all", async (req, res) => {
+      const { min, max } = req.query;
+      const query = {};
+
+      if (min && max) {
+        query.price = {
+          $gte: parseInt(min),
+          $lte: parseInt(max),
+        };
+      }
+
+      try {
+        const services = await servicesCollection.find(query).toArray();
+        res.send(services);
+      } catch (error) {
+        console.error("Error fetching filtered services:", error);
+        res.status(500).send({ error: "Failed to fetch services" });
+      }
+    });
+
+    // get 6 services
     app.get("/services", async (req, res) => {
-      const result = await servicesCollection.find().toArray();
-      res.send(result);
+      try {
+        const services = await servicesCollection.find({}).limit(6).toArray();
+        res.send(services);
+      } catch (error) {
+        console.error("Error fetching services:", error);
+        res.status(500).send({ error: "Failed to fetch services" });
+      }
     });
 
     //Get Provider's Services
@@ -108,6 +180,88 @@ async function run() {
         res.status(500).send({ error: "Failed to fetch service" });
       }
     });
+
+    // app.get("/services/top-rated", async (req, res) => {
+    //   try {
+    //     const services = await servicesCollection.find().toArray();
+
+    //     const rated = services
+    //       .map((s) => {
+    //         const ratings = Array.isArray(s.reviews)
+    //           ? s.reviews
+    //               .map((r) => r.rating)
+    //               .filter((r) => typeof r === "number")
+    //           : [];
+
+    //         const avgRating =
+    //           ratings.length > 0
+    //             ? ratings.reduce((a, b) => a + b, 0) / ratings.length
+    //             : 0;
+
+    //         return { ...s, avgRating };
+    //       })
+    //       .filter((s) => s.avgRating > 0)
+    //       .sort((a, b) => b.avgRating - a.avgRating);
+
+    //     const result =
+    //       rated.length > 0 ? rated.slice(0, 6) : services.slice(0, 6);
+    //     res.json(result);
+    //   } catch (error) {
+    //     console.error("Error in /services/top-rated:", error.message);
+    //     res.status(500).json({ error: "Failed to fetch service" });
+    //   }
+    // });
+
+    // app.get("/services/top-booked", async (req, res) => {
+    //   try {
+    //     const topServices = await bookingsCollection
+    //       .aggregate([
+    //         {
+    //           $group: {
+    //             _id: "$serviceId",
+    //             count: { $sum: 1 },
+    //           },
+    //         },
+    //         { $sort: { count: -1 } },
+    //         { $limit: 6 },
+    //         {
+    //           $addFields: {
+    //             serviceObjectId: {
+    //               $convert: {
+    //                 input: "$_id",
+    //                 to: "objectId",
+    //                 onError: null,
+    //                 onNull: null,
+    //               },
+    //             },
+    //           },
+    //         },
+    //         {
+    //           $lookup: {
+    //             from: "services",
+    //             localField: "serviceObjectId",
+    //             foreignField: "_id",
+    //             as: "service",
+    //           },
+    //         },
+    //         { $unwind: "$service" },
+    //         {
+    //           $addFields: {
+    //             "service.bookingCount": "$count",
+    //           },
+    //         },
+    //         {
+    //           $replaceRoot: { newRoot: "$service" },
+    //         },
+    //       ])
+    //       .toArray();
+
+    //     res.send(topServices);
+    //   } catch (error) {
+    //     console.error("🔥 Aggregation error:", error);
+    //     res.status(500).send({ error: "Failed to fetch service" });
+    //   }
+    // });
 
     // update service
     app.patch("/services/:id", async (req, res) => {
@@ -156,22 +310,54 @@ async function run() {
     });
 
     // Book a Service
+    // Book a Service
     app.post("/bookings", async (req, res) => {
-      const booking = req.body;
+      const { email, serviceId } = req.body;
+
       try {
-        const result = await bookingsCollection.insertOne(booking);
+        const service = await servicesCollection.findOne({
+          _id: new ObjectId(serviceId),
+        });
+
+        if (!service) {
+          return res.status(404).send({ error: "Service not found." });
+        }
+
+        if (service.providerEmail === email) {
+          return res
+            .status(403)
+            .send({ error: "You cannot book your own service." });
+        }
+
+        const existing = await bookingsCollection.findOne({
+          email,
+          serviceId,
+        });
+
+        if (existing) {
+          return res
+            .status(409)
+            .send({ error: "You already booked this service." });
+        }
+
+        const result = await bookingsCollection.insertOne(req.body);
         res.send(result);
       } catch (error) {
-        res.status(500).send({ error: "Failed to create booking" });
+        console.error("Booking error:", error);
+        res.status(500).send({ error: "Failed to book service." });
       }
     });
 
     // Get User's Bookings
-    app.get("/bookings/:email", async (req, res) => {
-      const result = await bookingsCollection
-        .find({ userEmail: req.params.email })
-        .toArray();
-      res.send(result);
+    app.get("/bookings", async (req, res) => {
+      const { userEmail, serviceId } = req.query;
+      const query = {};
+
+      if (userEmail) query.email = userEmail;
+      if (serviceId) query.serviceId = serviceId;
+
+      const bookings = await bookingsCollection.find(query).toArray();
+      res.send(bookings);
     });
 
     // Cancel Booking
