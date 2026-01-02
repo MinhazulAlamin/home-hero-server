@@ -26,7 +26,7 @@ app.get("/", (req, res) => {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
 
     const db = client.db("home_hero");
     const servicesCollection = db.collection("services");
@@ -95,36 +95,76 @@ async function run() {
     app.post("/services/:id/review", async (req, res) => {
       const { userId, userName, rating, comment } = req.body;
       const serviceId = req.params.id;
-      const existing = await servicesCollection.findOne({
-        _id: new ObjectId(serviceId),
-        "reviews.userId": userId,
-      });
 
-      if (existing) {
-        const updateFields = {};
-        if (rating !== undefined) updateFields["reviews.$.rating"] = rating;
-        if (comment !== undefined) updateFields["reviews.$.comment"] = comment;
+      try {
+        const service = await servicesCollection.findOne({
+          _id: new ObjectId(serviceId),
+        });
 
-        await servicesCollection.updateOne(
-          { _id: new ObjectId(serviceId), "reviews.userId": userId },
-          { $set: updateFields }
+        if (!service) {
+          return res.status(404).send({ error: "Service not found" });
+        }
+
+        // Check if user already reviewed
+        const existingReview = service.reviews?.find(
+          (r) => r.userId === userId
         );
-      } else {
-        const newReview = {
-          userId,
-          userName,
-          rating: rating || null,
-          comment: comment || "",
-          createdAt: new Date(),
-        };
 
+        if (existingReview) {
+          // Update existing review
+          await servicesCollection.updateOne(
+            { _id: new ObjectId(serviceId), "reviews.userId": userId },
+            {
+              $set: {
+                "reviews.$.rating": rating,
+                "reviews.$.comment": comment,
+                "reviews.$.updatedAt": new Date(),
+              },
+            }
+          );
+        } else {
+          // Add new review
+          const newReview = {
+            userId,
+            userName,
+            rating: rating || null,
+            comment: comment || "",
+            createdAt: new Date(),
+          };
+
+          await servicesCollection.updateOne(
+            { _id: new ObjectId(serviceId) },
+            { $push: { reviews: newReview } }
+          );
+        }
+
+        // Recalculate average rating
+        const updatedService = await servicesCollection.findOne({
+          _id: new ObjectId(serviceId),
+        });
+        const reviews = updatedService.reviews || [];
+        const validRatings = reviews.filter(
+          (r) => typeof r.rating === "number"
+        );
+        const avgRating =
+          validRatings.length > 0
+            ? (
+                validRatings.reduce((sum, r) => sum + r.rating, 0) /
+                validRatings.length
+              ).toFixed(1)
+            : 0;
+
+        // Update service's rating field
         await servicesCollection.updateOne(
           { _id: new ObjectId(serviceId) },
-          { $push: { reviews: newReview } }
+          { $set: { rating: parseFloat(avgRating) } }
         );
-      }
 
-      res.send({ success: true });
+        res.send({ success: true, updatedRating: avgRating });
+      } catch (error) {
+        console.error("Review error:", error);
+        res.status(500).send({ error: "Failed to submit review" });
+      }
     });
 
     // get all services
@@ -289,7 +329,7 @@ async function run() {
     // delete service
     app.delete("/services/:id", async (req, res) => {
       const { id } = req.params;
-      const { providerEmail } = req.body;
+      const { providerEmail } = req.query;
 
       try {
         const result = await servicesCollection.deleteOne({
@@ -309,7 +349,6 @@ async function run() {
       }
     });
 
-    // Book a Service
     // Book a Service
     app.post("/bookings", async (req, res) => {
       const { email, serviceId } = req.body;
@@ -368,7 +407,87 @@ async function run() {
       res.send(result);
     });
 
-    await client.db("admin").command({ ping: 1 });
+    app.get("/dashboard/stats", async (req, res) => {
+      try {
+        const { email } = req.query;
+        if (!email) return res.status(400).send({ error: "Email required" });
+
+        const servicesCount = await servicesCollection.countDocuments({
+          providerEmail: email,
+        });
+        const bookingsCount = await bookingsCollection.countDocuments({
+          email,
+        });
+
+        const services = await servicesCollection
+          .find({ providerEmail: email })
+          .toArray();
+        const avgRating =
+          services.length > 0
+            ? (
+                services.reduce((sum, s) => {
+                  const reviewRatings =
+                    s.reviews?.map((r) => r.rating || 0) || [];
+                  const total = reviewRatings.reduce((a, b) => a + b, 0);
+                  return (
+                    sum +
+                    (reviewRatings.length ? total / reviewRatings.length : 0)
+                  );
+                }, 0) / services.length
+              ).toFixed(1)
+            : 0;
+
+        const bookingsPerMonthAgg = await bookingsCollection
+          .aggregate([
+            { $match: { email } },
+            {
+              $group: {
+                _id: { $month: "$createdAt" },
+                bookings: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ])
+          .toArray();
+
+        const bookingsPerMonth = bookingsPerMonthAgg.map((d) => ({
+          month: new Date(2026, d._id - 1).toLocaleString("default", {
+            month: "short",
+          }),
+          bookings: d.bookings,
+        }));
+
+        const servicesByCategoryAgg = await servicesCollection
+          .aggregate([
+            { $match: { providerEmail: email } },
+            {
+              $group: {
+                _id: "$category",
+                value: { $sum: 1 },
+              },
+            },
+          ])
+          .toArray();
+
+        const servicesByCategory = servicesByCategoryAgg.map((d) => ({
+          category: d._id,
+          value: d.value,
+        }));
+
+        res.send({
+          services: servicesCount,
+          bookings: bookingsCount,
+          rating: avgRating,
+          bookingsPerMonth,
+          servicesByCategory,
+        });
+      } catch (error) {
+        console.error("Dashboard stats error:", error);
+        res.status(500).send({ error: "Failed to fetch dashboard stats" });
+      }
+    });
+
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
